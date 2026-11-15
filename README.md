@@ -14,7 +14,23 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-Python 3.10 o posterior. En cada terminal nueva, activa el entorno con `source ~/tools/mblanco/.venv/bin/activate` antes de usar el comando. La interfaz abre una pantalla TUI con el chat, entrada abajo y atajos F2/F3/F10.
+### Dependencias
+
+Requisitos del sistema:
+
+- Python 3.10 o posterior.
+- `venv` para crear el entorno virtual. En Debian/Ubuntu se instala con `sudo apt install python3-venv` si falta.
+- Git para clonar el repositorio.
+- Tailscale solo si se conectarán desde computadoras distintas.
+
+Dependencias de Python, instaladas automáticamente por `python -m pip install -e .`:
+
+- FastAPI `>=0.110` y Uvicorn `>=0.27` para el servidor de sala.
+- `websockets >=12` para el chat.
+- Textual `>=0.50` para la interfaz de terminal.
+- Setuptools `>=68` para construir e instalar el paquete.
+
+No hace falta instalarlas una por una. En cada terminal nueva, activa el entorno con `source ~/tools/mblanco/.venv/bin/activate` antes de usar el comando. La interfaz abre una pantalla TUI con el chat, entrada abajo y atajos F2/F3/F10.
 
 ## Inicio guiado
 
