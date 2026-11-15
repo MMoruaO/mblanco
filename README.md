@@ -14,7 +14,7 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-Python 3.10 o posterior. En cada terminal nueva, activa el entorno con `source ~/tools/mblanco/.venv/bin/activate` antes de usar el comando.
+Python 3.10 o posterior. En cada terminal nueva, activa el entorno con `source ~/tools/mblanco/.venv/bin/activate` antes de usar el comando. La interfaz abre una pantalla TUI con el chat, entrada abajo y atajos F2/F3/F10.
 
 ## Inicio guiado
 
@@ -49,7 +49,7 @@ cd ~/prueba-mblanco/colega
 mblanco join http://127.0.0.1:8765 --name colega
 ```
 
-Escribe mensajes en cualquiera de las terminales. Para compartir un archivo después de conectarse, cópialo a la carpeta `compartido/` de cualquiera de las dos. La otra instancia lo detecta y descarga automáticamente. Los comandos `F2` o `/files`, `F3` o `/sync` y `F10` o `/quit` muestran archivos, revisan pendientes y salen. Las teclas de función se pueden escribir como comandos; la consola sencilla no captura pulsaciones especiales.
+Escribe mensajes en cualquiera de las terminales. Para compartir un archivo después de conectarse, cópialo a la carpeta `compartido/` de cualquiera de las dos. La otra instancia lo detecta y descarga automáticamente. `F2` abre la vista de archivos, `F3` revisa pendientes y `F10` sale.
 
 Para comprobar pendientes con la app cerrada, termina ambas instancias, copia archivos a uno o ambos `compartido/`, inicia el host y vuelve a hacer `join`. La app muestra `↑ ... por subir · ↓ ... por recibir`, enumera nombres y pide confirmar antes de transferir. Si el host no responde, informa que no pudo revisar los archivos remotos.
 

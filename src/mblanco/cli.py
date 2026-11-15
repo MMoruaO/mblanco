@@ -172,6 +172,13 @@ class Chat:
         self.initial_pending_handled = False
         self.auto_sync_enabled = False
         self._stable_seen: dict[str, dict] = {}
+        self.ui = None
+
+    def notify(self, message: str, kind: str = "system") -> None:
+        if self.ui is not None:
+            self.ui.write_line(message, kind)
+        else:
+            print(message)
 
     async def send_event(self, event: dict):
         if self.socket:
@@ -186,24 +193,25 @@ class Chat:
             path.read_bytes(), {"Content-Type": "application/octet-stream", "X-Content-SHA256": digest},
         )
         if status == 409:
-            print(f"\nConflicto: {name} ya existe en la otra carpeta; no se sobrescribió.")
+            self.notify(f"Conflicto: {name} ya existe en la otra carpeta; no se sobrescribió.", "error")
             return False
         if status != 200:
-            print(f"\nNo se pudo subir {name}: HTTP {status} {body.decode(errors='replace')}")
+            self.notify(f"No se pudo subir {name}: HTTP {status} {body.decode(errors='replace')}", "error")
             return False
-        print(f"\nArchivo disponible para ambas personas: {name}")
+        self.notify(f"Archivo disponible para ambas personas: {name}", "available")
         return True
 
     async def download(self, name: str):
         local_path = self.shared / name
         local_path.parent.mkdir(parents=True, exist_ok=True)
         await self.send_event({"type": "transfer_started", "path": name})
+        self.notify(f"Recibiendo: {name}…", "progress")
         status, body = await asyncio.to_thread(_request, "GET", self.base + "/api/files/" + _url_path(name))
         if status != 200:
-            print(f"\nNo se pudo recibir {name}: HTTP {status}")
+            self.notify(f"No se pudo recibir {name}: HTTP {status}", "error")
             return False
         if local_path.exists():
-            print(f"\nConflicto: {name} ya existe localmente; no se sobrescribió.")
+            self.notify(f"Conflicto: {name} ya existe localmente; no se sobrescribió.", "error")
             return False
         tmp = local_path.with_name(local_path.name + ".mblanco-tmp")
         try:
@@ -213,29 +221,31 @@ class Chat:
             try:
                 os.link(tmp, local_path)
             except FileExistsError:
-                print(f"\nConflicto: {name} apareció durante la transferencia; no se sobrescribió.")
+                self.notify(f"Conflicto: {name} apareció durante la transferencia; no se sobrescribió.", "error")
                 return False
         finally:
             tmp.unlink(missing_ok=True)
-        print(f"\nArchivo disponible: {name}")
+        self.notify(f"Archivo recibido: {name}", "available")
         return True
 
-    async def reconcile(self, confirm: bool):
+    async def reconcile(self, confirm: bool, confirmer=None):
         local = await asyncio.to_thread(manifest, self.shared)
         remote = await asyncio.to_thread(_http_manifest, self.base)
         uploads, downloads, conflicts = _pending(local, remote)
-        print(f"Pendientes: ↑ {len(uploads)} por subir · ↓ {len(downloads)} por recibir · conflictos {len(conflicts)}")
+        self.notify(f"Pendientes: ↑ {len(uploads)} por subir · ↓ {len(downloads)} por recibir · conflictos {len(conflicts)}")
         if conflicts:
-            print("Conflictos (sin sobrescribir): " + ", ".join(conflicts))
+            self.notify("Conflictos (sin sobrescribir): " + ", ".join(conflicts), "error")
         self.initial_pending_handled = True
         if not uploads and not downloads:
             self.auto_sync_enabled = True
             return
         if confirm:
-            print("Por subir: " + (", ".join(uploads) if uploads else "ninguno"))
-            print("Por recibir: " + (", ".join(downloads) if downloads else "ninguno"))
-            answer = await asyncio.to_thread(input, "¿Transferir estos archivos? [s/N] ")
-            if answer.strip().lower() not in ("s", "sí", "si"):
+            if confirmer is None:
+                answer = await asyncio.to_thread(input, "¿Transferir estos archivos? [s/N] ")
+                approved = answer.strip().lower() in ("s", "sí", "si")
+            else:
+                approved = await confirmer(uploads, downloads)
+            if not approved:
                 self.auto_sync_enabled = False
                 return
         self.auto_sync_enabled = True
@@ -253,11 +263,11 @@ class Chat:
                 continue
             kind = event.get("type")
             if kind == "chat":
-                print(f"\n{event.get('sender', 'colega')}: {event.get('text', '')}")
+                self.notify(f"{event.get('sender', 'colega')}: {event.get('text', '')}", "chat")
             elif kind == "transfer_started":
-                print(f"\nTransfiriendo: {event.get('path', '')}…")
+                self.notify(f"Transfiriendo: {event.get('path', '')}…", "progress")
             elif kind == "file_available":
-                print(f"\nArchivo disponible: {event.get('path', '')}")
+                self.notify(f"Disponible en la sala: {event.get('path', '')}", "available")
 
     async def auto_sync(self):
         while True:
@@ -274,7 +284,7 @@ class Chat:
                 for name in conflicts:
                     # Avoid printing the same stable conflict every scan.
                     if name not in self._reported_conflicts:
-                        print(f"\nConflicto: {name} existe con contenido distinto; no se sobrescribió.")
+                        self.notify(f"Conflicto: {name} existe con contenido distinto; no se sobrescribió.", "error")
                         self._reported_conflicts.add(name)
                 for name in stable_uploads:
                     await self.upload(name)
@@ -287,33 +297,7 @@ class Chat:
             except (OSError, ConnectionError, urllib.error.URLError):
                 continue
 
-    async def command_loop(self):
-        print("mblanco conectado. F2 Archivos · F3 Sincronizar · F10 Salir")
-        while True:
-            try:
-                line = await asyncio.to_thread(input, "F2 Archivos · F3 Sincronizar · F10 Salir\nmblanco> ")
-            except (EOFError, KeyboardInterrupt):
-                return
-            text = line.strip()
-            if not text:
-                continue
-            if text.lower() in ("/quit", "/salir", "f10"):
-                return
-            if text.lower() in ("/files", "/archivos", "f2"):
-                local = await asyncio.to_thread(manifest, self.shared)
-                print("Archivos en compartido/:" if local else "compartido/ está vacío.")
-                for name, info in sorted(local.items()):
-                    print(f"  {name} ({info['size']} bytes)")
-                continue
-            if text.lower() in ("/sync", "/sincronizar", "f3"):
-                try:
-                    await self.reconcile(confirm=True)
-                except (OSError, ConnectionError, urllib.error.URLError) as exc:
-                    print(f"No se pudo revisar la sala: {exc}")
-                continue
-            await self.send_event({"type": "chat", "text": text, "sender": self.username})
-
-    async def run(self):
+    async def run(self, banner: str = ""):
         self.shared.mkdir(parents=True, exist_ok=True)
         try:
             # Probe first so an offline host is not mistaken for an empty remote folder.
@@ -325,18 +309,13 @@ class Chat:
             async with websockets.connect(self.ws_url, ping_interval=20) as socket:
                 self.socket = socket
                 self._reported_conflicts: set[str] = set()
+                from .ui import MblancoApp
+
+                self.ui = MblancoApp(self, banner)
                 try:
-                    await self.reconcile(confirm=True)
-                except (OSError, ConnectionError, urllib.error.URLError) as exc:
-                    print(f"No se pudieron revisar pendientes: {exc}")
-                    return
-                receiver = asyncio.create_task(self.receive())
-                syncer = asyncio.create_task(self.auto_sync())
-                try:
-                    await self.command_loop()
+                    await self.ui.run_async()
                 finally:
-                    receiver.cancel()
-                    syncer.cancel()
+                    self.ui = None
         except (OSError, websockets.WebSocketException) as exc:
             print(f"No se pudo conectar al chat: {exc}")
 
@@ -365,21 +344,20 @@ def _launch(config: dict, project_root: Path):
         port = int(config.get("port", 8765))
         server, thread = _start_host(listen, port, shared)
         local_address = "127.0.0.1" if listen in ("0.0.0.0", "::") else listen
-        print(f"Sala abierta para {project_root}")
-        print(f"Carpeta compartida: {shared}")
-        print(f"Dirección para unirse: {config.get('address', f'http://{local_address}:{port}')}")
-        print("Mantén esta terminal abierta mientras tu amigo se conecta.")
+        address = config.get("address", f"http://{local_address}:{port}")
         try:
-            asyncio.run(Chat(f"http://{local_address}:{port}", shared, username).run())
+            asyncio.run(Chat(f"http://{local_address}:{port}", shared, username).run(
+                banner=f"Anfitrión · {project_root} · Comparte: {address}"
+            ))
         except KeyboardInterrupt:
             pass
         finally:
             server.should_exit = True
             thread.join(timeout=3)
     elif config.get("role") == "join":
-        print(f"Proyecto local: {project_root}")
-        print(f"Carpeta compartida: {shared}")
-        asyncio.run(Chat(config["address"], shared, username).run())
+        asyncio.run(Chat(config["address"], shared, username).run(
+            banner=f"Conectado · {project_root}"
+        ))
 
 
 def main():
