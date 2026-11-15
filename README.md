@@ -19,9 +19,18 @@ python -m pip install -e .
 Requisitos del sistema:
 
 - Python 3.10 o posterior.
-- `venv` para crear el entorno virtual. En Debian/Ubuntu se instala con `sudo apt install python3-venv` si falta.
+- `venv` para crear el entorno virtual.
 - Git para clonar el repositorio.
 - Tailscale solo si se conectarán desde computadoras distintas.
+
+En Debian/Ubuntu, instala Python, `venv` y Git con:
+
+```sh
+sudo apt update
+sudo apt install python3 python3-venv git
+```
+
+En otras distribuciones, instala los paquetes equivalentes de Python 3, `venv` y Git con el gestor de paquetes correspondiente (por ejemplo, `dnf`, `pacman` o `zypper`). Los nombres exactos pueden variar según la distribución.
 
 Dependencias de Python, instaladas automáticamente por `python -m pip install -e .`:
 
