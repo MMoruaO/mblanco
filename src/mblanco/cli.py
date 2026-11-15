@@ -3,11 +3,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import hashlib
 import json
 import os
+import shutil
 import socket
+import subprocess
 import threading
 import time
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -51,6 +55,111 @@ def _pending(local: dict, remote: dict):
 
 def _url_path(name: str) -> str:
     return "/".join(urllib.parse.quote(part, safe="") for part in name.split("/"))
+
+
+def _workspace_config_path(project_root: Path) -> Path:
+    """Keep room settings outside the project; only compartido/ is shared."""
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    identity = hashlib.sha256(str(project_root.resolve()).encode()).hexdigest()
+    return config_home / "mblanco" / "workspaces" / f"{identity}.json"
+
+
+def _load_workspace_config(project_root: Path) -> dict | None:
+    config_path = _workspace_config_path(project_root)
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if config.get("project_root") != str(project_root.resolve()):
+        return None
+    return config
+
+
+def _save_workspace_config(project_root: Path, config: dict) -> None:
+    config_path = _workspace_config_path(project_root)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {**config, "project_root": str(project_root.resolve())}
+    fd, temp_name = tempfile.mkstemp(prefix=".mblanco-config-", dir=config_path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(payload, output, ensure_ascii=False, indent=2)
+            output.write("\n")
+        os.replace(temp_name, config_path)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
+
+
+def _tailscale_ip() -> str | None:
+    if not shutil.which("tailscale"):
+        return None
+    try:
+        result = subprocess.run(
+            ["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3, check=True
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return next((line.strip() for line in result.stdout.splitlines() if line.strip()), None)
+
+
+def _setup_workspace(project_root: Path, parser: argparse.ArgumentParser, reconfigure: bool = False) -> dict | None:
+    shared = project_root / "compartido"
+    if shared.is_symlink():
+        parser.error("compartido/ no puede ser un enlace simbólico")
+
+    existing = _load_workspace_config(project_root)
+    print(f"Carpeta del proyecto: {project_root}")
+    print(f"mblanco solo accederá a: {shared}")
+    print("Los demás archivos de esta carpeta no se comparten.")
+    if existing is None:
+        trusted = input("¿Confías en esta carpeta y quieres configurarla? [s/N] ").strip().lower()
+        if trusted not in ("s", "sí", "si"):
+            print("Configuración cancelada.")
+            return None
+    elif not reconfigure:
+        return existing
+    else:
+        print("Esta carpeta ya estaba autorizada; vamos a cambiar su sala.")
+
+    shared.mkdir(parents=True, exist_ok=True)
+    print("¿Qué quieres hacer?")
+    print("  1) Crear una sala aquí (anfitrión)")
+    print("  2) Unirme a la sala de otra persona")
+    choice = input("Elige 1 o 2: ").strip()
+    if choice == "1":
+        port_text = input("Puerto [8765]: ").strip()
+        try:
+            port = int(port_text) if port_text else 8765
+            if not 1 <= port <= 65535:
+                raise ValueError
+        except ValueError:
+            parser.error("el puerto debe estar entre 1 y 65535")
+        tailscale_ip = _tailscale_ip()
+        if tailscale_ip:
+            print(f"IP Tailscale detectada: {tailscale_ip}")
+            listen = tailscale_ip
+            address = f"http://{tailscale_ip}:{port}"
+            print("La sala escuchará en esa IP privada de Tailscale.")
+        else:
+            listen = "127.0.0.1"
+            address = f"http://127.0.0.1:{port}"
+            print("No detecté Tailscale; esta sala aceptará conexiones locales solamente.")
+        config = {
+            "role": "host", "listen": listen, "port": port,
+            "address": address, "name": getpass.getuser(),
+        }
+    elif choice == "2":
+        address = input("Dirección de la anfitriona (ej. http://100.x.y.z:8765): ").strip().rstrip("/")
+        parsed = urllib.parse.urlparse(address)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            parser.error("escribe una dirección completa, por ejemplo http://100.x.y.z:8765")
+        name = input(f"Tu nombre [{getpass.getuser()}]: ").strip() or getpass.getuser()
+        config = {"role": "join", "address": address, "name": name}
+    else:
+        parser.error("elige 1 para crear la sala o 2 para unirte")
+    _save_workspace_config(project_root, config)
+    print("Configuración guardada para esta carpeta; la próxima vez bastará con escribir mblanco.")
+    return config
 
 
 class Chat:
@@ -247,35 +356,65 @@ def _start_host(listen: str, port: int, shared: Path):
     raise TimeoutError("Uvicorn no inició a tiempo")
 
 
+def _launch(config: dict, project_root: Path):
+    shared = project_root / "compartido"
+    shared.mkdir(parents=True, exist_ok=True)
+    username = config.get("name") or getpass.getuser()
+    if config.get("role") == "host":
+        listen = config.get("listen", "127.0.0.1")
+        port = int(config.get("port", 8765))
+        server, thread = _start_host(listen, port, shared)
+        local_address = "127.0.0.1" if listen in ("0.0.0.0", "::") else listen
+        print(f"Sala abierta para {project_root}")
+        print(f"Carpeta compartida: {shared}")
+        print(f"Dirección para unirse: {config.get('address', f'http://{local_address}:{port}')}")
+        print("Mantén esta terminal abierta mientras tu amigo se conecta.")
+        try:
+            asyncio.run(Chat(f"http://{local_address}:{port}", shared, username).run())
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.should_exit = True
+            thread.join(timeout=3)
+    elif config.get("role") == "join":
+        print(f"Proyecto local: {project_root}")
+        print(f"Carpeta compartida: {shared}")
+        asyncio.run(Chat(config["address"], shared, username).run())
+
+
 def main():
     parser = argparse.ArgumentParser(prog="mblanco", description="Chat y archivos para un proyecto compartido")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
     host = sub.add_parser("host", help="crear una sala en esta computadora")
     host.add_argument("--listen", default="127.0.0.1", help="dirección de escucha (por defecto localhost)")
     host.add_argument("--port", type=int, default=8765)
     join = sub.add_parser("join", help="conectarse a una sala existente")
     join.add_argument("address", help="dirección HTTP de la anfitriona, por ejemplo http://127.0.0.1:8765")
     join.add_argument("--name", default=getpass.getuser())
+    sub.add_parser("setup", help="configurar o cambiar la sala de esta carpeta")
     args = parser.parse_args()
-    shared = Path.cwd() / "compartido"
+    project_root = Path.cwd().resolve()
+    shared = project_root / "compartido"
     if shared.is_symlink():
         parser.error("compartido/ no puede ser un enlace simbólico")
     shared.mkdir(exist_ok=True)
-    username = getattr(args, "name", getpass.getuser())
     if args.command == "host":
-        server, thread = _start_host(args.listen, args.port, shared)
-        address = f"http://127.0.0.1:{args.port}"
-        print(f"Sala disponible en {args.listen}:{args.port}; carpeta: {shared}")
-        print("Para acceso por Tailscale, usa mblanco join http://IP-TAILSCALE:" + str(args.port))
-        try:
-            asyncio.run(Chat(address, shared, username).run())
-        except KeyboardInterrupt:
-            pass
-        finally:
-            server.should_exit = True
-            thread.join(timeout=3)
+        listen = args.listen
+        local_address = "127.0.0.1" if listen in ("0.0.0.0", "::") else listen
+        config = {
+            "role": "host", "listen": listen, "port": args.port,
+            "address": f"http://{local_address}:{args.port}", "name": getpass.getuser(),
+        }
+        _save_workspace_config(project_root, config)
+        _launch(config, project_root)
+    elif args.command == "join":
+        config = {"role": "join", "address": args.address.rstrip("/"), "name": args.name}
+        _save_workspace_config(project_root, config)
+        _launch(config, project_root)
     else:
-        asyncio.run(Chat(args.address, shared, username).run())
+        config = _setup_workspace(project_root, parser, reconfigure=args.command == "setup")
+        if config:
+            _launch(config, project_root)
 
 
 if __name__ == "__main__":

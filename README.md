@@ -4,17 +4,34 @@ Chat y transferencia de archivos para dos personas que trabajan en el mismo proy
 
 ## Instalar
 
-Desde la carpeta de este proyecto:
+Instala mblanco una vez por computadora. Clona el repositorio en una carpeta de herramientas, no dentro del proyecto que compartirás:
 
 ```sh
+git clone https://github.com/MMoruaO/mblanco.git ~/tools/mblanco
+cd ~/tools/mblanco
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -e .
 ```
 
-Python 3.10 o posterior. La interfaz inicial es una consola interactiva; `textual` queda como extra opcional mientras se prioriza el flujo de red.
+Python 3.10 o posterior. En cada terminal nueva, activa el entorno con `source ~/tools/mblanco/.venv/bin/activate` antes de usar el comando.
+
+## Inicio guiado
+
+Ve a la carpeta local del proyecto y ejecuta `mblanco`:
+
+```sh
+cd ~/ruta/local/al/proyecto
+mblanco
+```
+
+La primera vez, mblanco confirma la carpeta actual y aclara que solo accederá a `compartido/`. Después pregunta si crear una sala o unirse a una. La elección se guarda en la configuración local de tu usuario, fuera del proyecto; las siguientes veces basta con ejecutar `mblanco` en esa carpeta. Usa `mblanco setup` para cambiar de sala o de rol.
+
+Si Tailscale está conectado y mblanco puede detectar su IP, al crear una sala escucha en esa IP privada y te muestra la dirección que debes pasarle a tu colega. Sin Tailscale, el inicio guiado solo habilita conexiones locales. Para cambiar manualmente el puerto o la interfaz de escucha, usa los comandos `mblanco host` y `mblanco join` de abajo.
 
 ## Probar en una computadora, con dos terminales
 
-Abre **dos terminales en dos carpetas distintas**. En ambas, instala `mblanco` con el comando anterior (o instala una sola vez en el mismo entorno Python).
+Abre **dos terminales en dos carpetas distintas** y activa el entorno de mblanco en ambas. La anfitriona elige crear la sala y la otra persona elige unirse. También puedes usar los comandos explícitos siguientes.
 
 Terminal 1, desde la carpeta local de la anfitriona:
 
@@ -38,23 +55,25 @@ Para comprobar pendientes con la app cerrada, termina ambas instancias, copia ar
 
 ## Probar entre dos computadoras por Tailscale
 
-Instala y conecta Tailscale en las dos computadoras. En ambas, instala `mblanco` en un entorno Python y abre la carpeta local del proyecto correspondiente.
+Instala y conecta Tailscale en las dos computadoras. En ambas, instala mblanco una vez y activa su entorno en la terminal. Después abre la carpeta local del proyecto correspondiente.
 
-En la computadora anfitriona, permite conexiones por su interfaz de red:
+En la computadora anfitriona:
 
 ```sh
 cd ~/ruta/local/al/proyecto
-mblanco host --listen 0.0.0.0 --port 8765
+mblanco
 ```
 
-En la otra computadora, sustituye `100.x.y.z` por la IP Tailscale de la anfitriona:
+Elige `1` para crear la sala. Si el asistente detecta Tailscale, mostrará la dirección que debe usar tu colega.
+
+En la computadora de tu colega:
 
 ```sh
 cd ~/otra/ruta/local/al/proyecto
-mblanco join http://100.x.y.z:8765 --name colega
+mblanco
 ```
 
-No se configura VPN ni descubrimiento: Tailscale proporciona la red privada. La anfitriona debe mantener `mblanco host` abierto; si se apaga, la sala deja de responder. Los archivos ya descargados permanecen en cada carpeta. Si el firewall del equipo anfitrión bloquea conexiones entrantes, permite TCP en el puerto elegido dentro de la interfaz Tailscale.
+Elige `2` y pega la dirección que te compartió la anfitriona. La anfitriona debe mantener mblanco abierto; si se apaga, la sala deja de responder. Los archivos ya descargados permanecen en cada carpeta. No se configura VPN ni se busca automáticamente a la otra computadora: Tailscale da la conectividad y ustedes intercambian la dirección de la sala.
 
 ## Alcance de esta versión
 
