@@ -24,10 +24,16 @@ from .core import file_hash, manifest
 from .server import create_app
 
 
-def _request(method: str, url: str, data: bytes | None = None, headers: dict | None = None):
+def _request(
+    method: str,
+    url: str,
+    data: bytes | None = None,
+    headers: dict | None = None,
+    timeout: float = 30,
+):
     req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
@@ -113,7 +119,7 @@ def _refresh_guided_host(config: dict, tailscale_ip: str | None) -> dict:
 
 
 def _verify_host(address: str) -> None:
-    status, body = _request("GET", address.rstrip("/") + "/health")
+    status, body = _request("GET", address.rstrip("/") + "/health", timeout=5)
     if status != 200:
         raise ConnectionError(f"el servidor respondió HTTP {status}")
     try:
@@ -322,13 +328,16 @@ class Chat:
     async def run(self, banner: str = ""):
         self.shared.mkdir(parents=True, exist_ok=True)
         try:
-            # Probe first so an offline host is not mistaken for an empty remote folder.
-            await asyncio.to_thread(_http_manifest, self.base)
+            # Check reachability quickly; do not hash the full shared folder before showing the TUI.
+            await asyncio.to_thread(_verify_host, self.base)
         except Exception as exc:
-            print(f"La anfitriona no está disponible; no se revisaron archivos remotos ({exc}).")
+            print(
+                "No pude alcanzar al anfitrión en 5 segundos; no revisé archivos remotos. "
+                f"Comprueba que la sala siga abierta y que la dirección use la IP Tailscale y el puerto correctos. ({exc})"
+            )
             return
         try:
-            async with websockets.connect(self.ws_url, ping_interval=20) as socket:
+            async with websockets.connect(self.ws_url, ping_interval=20, open_timeout=5) as socket:
                 self.socket = socket
                 self._reported_conflicts: set[str] = set()
                 from .ui import MblancoApp
