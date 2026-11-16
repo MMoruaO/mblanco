@@ -9,7 +9,7 @@ from pathlib import Path
 import uvicorn
 import websockets
 
-from mblanco.cli import Chat, _http_manifest, _pending
+from mblanco.cli import Chat, _http_manifest, _pending, _verify_host
 from mblanco.core import manifest
 from mblanco.server import create_app
 
@@ -59,6 +59,9 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
         (self.host_dir / "salida.txt").write_text("respuesta", encoding="utf-8")
         self.assertTrue(await peer.download("salida.txt"))
         self.assertEqual((self.peer_dir / "salida.txt").read_text(), "respuesta")
+
+    async def test_host_health_check_confirms_ready_server(self):
+        await asyncio.to_thread(_verify_host, self.base)
 
     async def test_reconnect_pending_counts_and_conflict_does_not_overwrite(self):
         (self.peer_dir / "nuevo-local.txt").write_text("local", encoding="utf-8")

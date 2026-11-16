@@ -52,7 +52,7 @@ mblanco
 
 La primera vez, mblanco confirma la carpeta actual y aclara que solo accederá a `compartido/`. Después pregunta si crear una sala o unirse a una. La elección se guarda en la configuración local de tu usuario, fuera del proyecto; las siguientes veces basta con ejecutar `mblanco` en esa carpeta. Usa `mblanco setup` para cambiar de sala o de rol.
 
-Si Tailscale está conectado y mblanco puede detectar su IP, al crear una sala escucha en esa IP privada y te muestra la dirección que debes pasarle a tu colega. Sin Tailscale, el inicio guiado solo habilita conexiones locales. Para cambiar manualmente el puerto o la interfaz de escucha, usa los comandos `mblanco host` y `mblanco join` de abajo.
+Si Tailscale está conectado y mblanco puede detectar su IP, al crear una sala escucha en esa IP privada, verifica que el servidor responda y muestra el comando completo para tu colega. También corrige una configuración guiada que hubiera quedado en `127.0.0.1`. Esa verificación confirma el servidor local; tu colega confirma la ruta entre computadoras al ejecutar el comando de conexión. Sin Tailscale, el inicio guiado solo habilita conexiones locales. Para cambiar manualmente el puerto o la interfaz de escucha, usa los comandos `mblanco host` y `mblanco join` de abajo.
 
 ## Probar en una computadora, con dos terminales
 

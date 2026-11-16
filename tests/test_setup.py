@@ -5,7 +5,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mblanco.cli import _load_workspace_config, _save_workspace_config, _setup_workspace, _workspace_config_path
+from mblanco.cli import (
+    _load_workspace_config,
+    _refresh_guided_host,
+    _save_workspace_config,
+    _setup_workspace,
+    _workspace_config_path,
+)
 
 
 class SetupTests(unittest.TestCase):
@@ -38,6 +44,13 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(config["name"], "colega")
         self.assertTrue((self.project / "compartido").is_dir())
         self.assertEqual(_load_workspace_config(self.project), config | {"project_root": str(self.project.resolve())})
+
+    def test_guided_host_refreshes_a_stale_localhost_address(self):
+        old_config = {"role": "host", "listen": "127.0.0.1", "port": 8765, "address": "http://127.0.0.1:8765"}
+        refreshed = _refresh_guided_host(old_config, "100.72.10.5")
+        self.assertEqual(refreshed["listen"], "100.72.10.5")
+        self.assertEqual(refreshed["address"], "http://100.72.10.5:8765")
+        self.assertEqual(old_config["listen"], "127.0.0.1")
 
 
 if __name__ == "__main__":

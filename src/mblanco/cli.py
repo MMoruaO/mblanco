@@ -102,6 +102,28 @@ def _tailscale_ip() -> str | None:
     return next((line.strip() for line in result.stdout.splitlines() if line.strip()), None)
 
 
+def _refresh_guided_host(config: dict, tailscale_ip: str | None) -> dict:
+    """Refresh a guided host's advertised/bound address when Tailscale is up."""
+    refreshed = dict(config)
+    if refreshed.get("guided", True) and tailscale_ip:
+        port = int(refreshed.get("port", 8765))
+        refreshed["listen"] = tailscale_ip
+        refreshed["address"] = f"http://{tailscale_ip}:{port}"
+    return refreshed
+
+
+def _verify_host(address: str) -> None:
+    status, body = _request("GET", address.rstrip("/") + "/health")
+    if status != 200:
+        raise ConnectionError(f"el servidor respondió HTTP {status}")
+    try:
+        health = json.loads(body)
+    except ValueError as exc:
+        raise ConnectionError("el servidor respondió algo distinto a mblanco") from exc
+    if health.get("ok") is not True:
+        raise ConnectionError("el servidor no confirmó que mblanco está listo")
+
+
 def _setup_workspace(project_root: Path, parser: argparse.ArgumentParser, reconfigure: bool = False) -> dict | None:
     shared = project_root / "compartido"
     if shared.is_symlink():
@@ -146,7 +168,7 @@ def _setup_workspace(project_root: Path, parser: argparse.ArgumentParser, reconf
             print("No detecté Tailscale; esta sala aceptará conexiones locales solamente.")
         config = {
             "role": "host", "listen": listen, "port": port,
-            "address": address, "name": getpass.getuser(),
+            "address": address, "name": getpass.getuser(), "guided": True,
         }
     elif choice == "2":
         address = input("Dirección de la anfitriona (ej. http://100.x.y.z:8765): ").strip().rstrip("/")
@@ -340,14 +362,35 @@ def _launch(config: dict, project_root: Path):
     shared.mkdir(parents=True, exist_ok=True)
     username = config.get("name") or getpass.getuser()
     if config.get("role") == "host":
+        tailscale_ip = _tailscale_ip()
+        config = _refresh_guided_host(config, tailscale_ip)
         listen = config.get("listen", "127.0.0.1")
         port = int(config.get("port", 8765))
-        server, thread = _start_host(listen, port, shared)
+        if config.get("guided", True) and tailscale_ip:
+            _save_workspace_config(project_root, config)
+        try:
+            server, thread = _start_host(listen, port, shared)
+        except RuntimeError as exc:
+            print(f"No pude iniciar la sala en {listen}:{port}. Puede que el puerto ya esté ocupado. {exc}")
+            return
         local_address = "127.0.0.1" if listen in ("0.0.0.0", "::") else listen
         address = config.get("address", f"http://{local_address}:{port}")
         try:
+            _verify_host(f"http://{local_address}:{port}")
+        except (OSError, ConnectionError) as exc:
+            server.should_exit = True
+            thread.join(timeout=3)
+            print(f"La sala arrancó, pero no pude verificarla localmente: {exc}")
+            return
+        if address.startswith(("http://127.0.0.1", "http://localhost")) and listen in ("127.0.0.1", "localhost"):
+            banner = "Servidor verificado localmente · Sin IP Tailscale; solo acepta conexiones locales"
+        elif address.startswith(("http://127.0.0.1", "http://localhost")):
+            banner = "Servidor verificado · Sin IP Tailscale detectada; comparte una IP de esta computadora"
+        else:
+            banner = f"Servidor verificado ✓ · Pásale a tu colega: mblanco join {address}"
+        try:
             asyncio.run(Chat(f"http://{local_address}:{port}", shared, username).run(
-                banner=f"Anfitrión · {project_root} · Comparte: {address}"
+                banner=banner
             ))
         except KeyboardInterrupt:
             pass
@@ -379,9 +422,15 @@ def main():
     if args.command == "host":
         listen = args.listen
         local_address = "127.0.0.1" if listen in ("0.0.0.0", "::") else listen
+        tailscale_ip = _tailscale_ip()
         config = {
             "role": "host", "listen": listen, "port": args.port,
-            "address": f"http://{local_address}:{args.port}", "name": getpass.getuser(),
+            "address": (
+                f"http://{tailscale_ip}:{args.port}"
+                if listen in ("0.0.0.0", "::") and tailscale_ip
+                else f"http://{local_address}:{args.port}"
+            ),
+            "name": getpass.getuser(), "guided": False,
         }
         _save_workspace_config(project_root, config)
         _launch(config, project_root)
